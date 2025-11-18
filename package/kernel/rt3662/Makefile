@@ -43,8 +43,9 @@ define Build/Compile/variant
 endef
 
 define Build/Compile
+	$(KERNEL_MAKE) olddefconfig modules_prepare
 	$(foreach v,$(RT3662_VARIANTS), \
-	$(call Build/Compile/variant,$(v),$(call uppercase,$(v)))$(newline))
+		$(call Build/Compile/variant,$(v),$(call uppercase,$(v)))$(newline))
 endef
 
 define KernelPackage/rt3662-template
