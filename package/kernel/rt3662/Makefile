@@ -13,7 +13,8 @@ include $(INCLUDE_DIR)/package.mk
 $(LINUX_DIR)/.config:
 	$(MAKE) -C "$(TOPDIR)" OPENWRT_BUILD= kernel_oldconfig
 
-=======
+
+
 
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
