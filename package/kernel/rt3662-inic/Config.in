@@ -1,0 +1,33 @@
+if PACKAGE_kmod-rt3662-inic
+
+choice
+        prompt "Interface type"
+        default RT3662_INIC_INF_USB
+
+config RT3662_INIC_INF_USB
+        bool "USB"
+
+config RT3662_INIC_INF_PCI
+        bool "PCI"
+
+config RT3662_INIC_INF_PCIE
+        bool "PCIe"
+
+config RT3662_INIC_INF_MII
+        bool "MII"
+endchoice
+
+config RT3662_INIC_AGGREGATION
+        bool "Enable USB frame aggregation"
+        depends on RT3662_INIC_INF_USB
+        default n
+
+config RT3662_INIC_NEW_MBSS
+        bool "Enable new MBSS support"
+        default n
+
+config RT3662_INIC_CONCURRENT
+        bool "Enable concurrent iNIC support"
+        default n
+
+endif
