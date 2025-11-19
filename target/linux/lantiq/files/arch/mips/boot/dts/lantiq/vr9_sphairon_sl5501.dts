@@ -23,7 +23,7 @@
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x4000000>; /* 64 MiB */
+		reg = <0x0 0x8000000>; /* 128 MiB */
 	};
 
 	keys {
@@ -156,12 +156,12 @@
 		reg = <0x1>;
 	};
 
-	phy5: ethernet-phy@5 {
-		reg = <0x5>;
-	};
-
 	phy11: ethernet-phy@11 {
 		reg = <0x11>;
+	};
+
+	phy12: ethernet-phy@12 {
+		reg = <0x12>;
 	};
 
 	phy13: ethernet-phy@13 {
@@ -172,37 +172,41 @@
 &gswip_ports {
 	port@0 {
 		reg = <0>;
-		label = "lan4";
-		phy-mode = "rgmii";
+		label = "wan";
+		phy-mode = "rgmii-id";
+		tx-internal-delay-ps = <1500>;
+		rx-internal-delay-ps = <1500>;
 		phy-handle = <&phy0>;
 	};
 
 	port@1 {
 		reg = <1>;
-		label = "lan3";
-		phy-mode = "rgmii";
+		label = "lan4";
+		phy-mode = "rgmii-id";
+		tx-internal-delay-ps = <1500>;
+		rx-internal-delay-ps = <1500>;
 		phy-handle = <&phy1>;
 	};
 
 	port@2 {
 		reg = <2>;
-		label = "lan2";
+		label = "lan1";
 		phy-mode = "internal";
 		phy-handle = <&phy11>;
 	};
 
-	port@4 {
-		reg = <4>;
-		label = "lan1";
+	port@3 {
+		reg = <3>;
+		label = "lan2";
 		phy-mode = "internal";
-		phy-handle = <&phy13>;
+		phy-handle = <&phy12>;
 	};
 
-	port@5 {
-		reg = <5>;
-		label = "wan";
-		phy-mode = "rgmii";
-		phy-handle = <&phy5>;
+	port@4 {
+		reg = <4>;
+		label = "lan3";
+		phy-mode = "internal";
+		phy-handle = <&phy13>;
 	};
 };
 
@@ -225,21 +229,17 @@
 				read-only;
 			};
 
-			partition@80000 {
+				partition@80000 {
 				reg = <0x00080000 0x00040000>;
-				label = "uboot_cfg";
+				label = "u-boot-env";
 				read-only;
 			};
 
 			partition@c0000 {
-				reg = <0x000c0000 0x00f80000>;
+				reg = <0x000c0000 0x03f40000>;
 				label = "firmware";
 			};
 
-			partition@1040000 {
-				reg = <0x01040000 0x02fc0000>;
-				label = "data";
-			};
 		};
 	};
 };

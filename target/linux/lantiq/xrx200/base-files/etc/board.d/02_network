@@ -24,6 +24,7 @@ lantiq_setup_interfaces()
 	bt,homehub-v5a|\
 	lantiq,easy80920-nand|\
 	lantiq,easy80920-nor|\
+	sphairon,sl5501|\
 	zyxel,p-2812hnu-f1|\
 	zyxel,p-2812hnu-f3)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
@@ -129,6 +130,10 @@ lantiq_setup_macs()
 		;;
 	bt,homehub-v5a)
 		lan_mac=$(mtd_get_mac_binary_ubi caldata 0x110c)
+		wan_mac=$(macaddr_add "$lan_mac" 1)
+		;;
+	sphairon,sl5501)
+		lan_mac=$(mtd_get_mac_ascii u-boot-env ethaddr)
 		wan_mac=$(macaddr_add "$lan_mac" 1)
 		;;
 	buffalo,wbmr-300hpd)
