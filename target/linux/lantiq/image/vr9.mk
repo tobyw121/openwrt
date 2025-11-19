@@ -363,3 +363,13 @@ define Device/zyxel_p-2812hnu-f3
   DEFAULT := n
 endef
 TARGET_DEVICES += zyxel_p-2812hnu-f3
+
+define Device/sphairon_sl5501
+  DEVICE_VENDOR := Sphairon
+  DEVICE_MODEL := SL5501
+  DEVICE_DTS := vr9_sphairon_sl5501
+  DEVICE_PACKAGES := kmod-rt2800-pci wpad-basic-mbedtls kmod-usb-dwc2
+  IMAGE_SIZE := 64704k
+#  IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-to $$(IMAGE_SIZE) | append-metadata
+endef
+TARGET_DEVICES += sphairon_sl5501
