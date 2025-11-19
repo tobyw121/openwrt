@@ -208,6 +208,18 @@
 		phy-mode = "internal";
 		phy-handle = <&phy13>;
 	};
+
+	port@5 {
+		reg = <5>;
+		label = "wifi";
+		phy-mode = "rgmii-id";
+		tx-internal-delay-ps = <1500>;
+		rx-internal-delay-ps = <1500>;
+		fixed-link {
+			speed = <1000>;
+			full-duplex;
+		};
+	};
 };
 
 &spi {
