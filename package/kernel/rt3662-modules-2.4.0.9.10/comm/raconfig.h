@@ -13,6 +13,7 @@
 #include <linux/cache.h>
 #include <linux/skbuff.h>
 #include <linux/interrupt.h>
+#include <linux/sched/signal.h>
 #include <linux/notifier.h>
 #include <net/iw_handler.h>
 
@@ -314,11 +315,19 @@ typedef enum _SOURCE_TYPE {
     daemonize();                       \
     reparent_to_init();                \
 }
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5,4,0)
 #define KERNEL_THREAD_BEGIN(name)      \
 {                                      \
     daemonize(name);                   \
     allow_signal(SIGKILL);             \
+}
+#else
+#define KERNEL_THREAD_BEGIN(name)      \
+{                                      \
+    allow_signal(SIGKILL);             \
+    allow_signal(SIGTERM);             \
+    current->flags |= PF_NOFREEZE;     \
+    strlcpy(current->comm, name, sizeof(current->comm)); \
 }
 #endif
 
