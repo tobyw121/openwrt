@@ -1,5 +1,6 @@
 #include "../comm/rlk_inic.h"
 #include <linux/workqueue.h>
+#include <linux/timer.h>
 /*
  * This is a "USB networking" framework that works with ralink rlk_inic.
  * We call this "Host Driver", and will create a netdevice to control networking
@@ -492,8 +493,17 @@ static int usbnet_open (struct net_device *net)
 
 		netif_start_queue (net);
 		netif_carrier_off(net);
-		tasklet_schedule (&dev->bh);
-	}
+        tasklet_schedule (&dev->bh);
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+static void usbnet_delay_bh(struct timer_list *t)
+{
+        struct usbnet *dev = from_timer(dev, t, delay);
+
+        usbnet_bh((unsigned long)dev);
+}
+#endif
 
 	return 0;
 
@@ -1085,20 +1095,26 @@ static int phase1_probe (struct usb_device *xdev, struct usb_interface *udev, co
 	/* (1) create net_dev */
 	net = alloc_etherdev(sizeof(iNIC_PRIVATE));
 
- 	SET_MODULE_OWNER(net);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
+        SET_MODULE_OWNER(net);
+#endif
 
-	dev = netdev_priv(net);
-	skb_queue_head_init (&dev->rxq);
-	skb_queue_head_init (&dev->txq);
-	skb_queue_head_init (&dev->done);
+        dev = netdev_priv(net);
+        skb_queue_head_init (&dev->rxq);
+        skb_queue_head_init (&dev->txq);
+        skb_queue_head_init (&dev->done);
 #ifdef RLK_INIC_SOFTWARE_AGGREATION
 	skb_queue_head_init (&dev->aggr_q);
 #endif
-	dev->bh.func = usbnet_bh;
-	dev->bh.data = (unsigned long) dev;
-	dev->delay.function = usbnet_bh;
-	dev->delay.data = (unsigned long) dev;
-	init_timer (&dev->delay);
+        dev->bh.func = usbnet_bh;
+        dev->bh.data = (unsigned long) dev;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+        timer_setup(&dev->delay, usbnet_delay_bh, 0);
+#else
+        dev->delay.function = usbnet_bh;
+        dev->delay.data = (unsigned long) dev;
+        init_timer (&dev->delay);
+#endif
 
 	dev->udev = xdev;
 	dev->intf = udev;

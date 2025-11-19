@@ -24,7 +24,10 @@ PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 RT3662_SRC_DIR:=$(CURDIR)/../rt3662-modules-$(PKG_VERSION)
 RT3662_VARIANTS:=pci pcie mii usb
-newline := \
+define newline
+
+
+endef
 
 uppercase = $(shell echo $(1) | tr '[:lower:]' '[:upper:]')
 
