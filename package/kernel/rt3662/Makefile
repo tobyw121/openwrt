@@ -10,6 +10,10 @@ PKG_MAINTAINER:=OpenWrt Community
 include $(INCLUDE_DIR)/kernel.mk
 include $(INCLUDE_DIR)/package.mk
 
+ifeq ($(CONFIG_TARGET_DEVICE_lantiq_xrx200_DEVICE_sphairon_sl5501),y)
+MODPARAMS.rt3662_iNIC += miimaster=wifi
+endif
+
 $(LINUX_DIR)/.config:
 	$(MAKE) -C "$(TOPDIR)" OPENWRT_BUILD= kernel_oldconfig
 

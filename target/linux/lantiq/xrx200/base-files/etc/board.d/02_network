@@ -24,10 +24,12 @@ lantiq_setup_interfaces()
 	bt,homehub-v5a|\
 	lantiq,easy80920-nand|\
 	lantiq,easy80920-nor|\
-	sphairon,sl5501|\
 	zyxel,p-2812hnu-f1|\
 	zyxel,p-2812hnu-f3)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+		;;
+	sphairon,sl5501)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 wifi" "wan"
 		;;
 	avm,fritz3370-rev2-hynix|\
 	avm,fritz3370-rev2-micron|\

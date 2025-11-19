@@ -368,7 +368,7 @@ define Device/sphairon_sl5501
   DEVICE_VENDOR := Sphairon
   DEVICE_MODEL := SL5501
   DEVICE_DTS := vr9_sphairon_sl5501
-  DEVICE_PACKAGES := kmod-rt3662-pci wpad-basic-mbedtls kmod-usb-dwc2
+  DEVICE_PACKAGES := kmod-rt3662-mii wpad-basic-mbedtls kmod-usb-dwc2
   IMAGE_SIZE := 64512k
   SUPPORTED_DEVICES += sphairon,sl5501
 endef
