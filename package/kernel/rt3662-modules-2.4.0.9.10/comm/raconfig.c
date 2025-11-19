@@ -1,5 +1,8 @@
 #include "rlk_inic.h"
 #include <linux/delay.h>
+#include <linux/kthread.h>
+#include <linux/sched/signal.h>
+#include <linux/timer.h>
 
 #ifdef WOWLAN_SUPPORT
 #include <linux/suspend.h>
@@ -226,12 +229,16 @@ static void RaCfgAddHeartBeatTimer(iNIC_PRIVATE *pAd)
 		return;
 	}
 
-	if (!pAd->RaCfgObj.heartBeat.function)
-	{
-		init_timer(&pAd->RaCfgObj.heartBeat);
-		pAd->RaCfgObj.heartBeat.function = RaCfgHeartBeatTimeOut;
-		pAd->RaCfgObj.heartBeat.data = (uintptr_t)pAd;
-	}
+        if (!pAd->RaCfgObj.heartBeat.function)
+        {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+                timer_setup(&pAd->RaCfgObj.heartBeat, RaCfgHeartBeatTimeOut, 0);
+#else
+                init_timer(&pAd->RaCfgObj.heartBeat);
+                pAd->RaCfgObj.heartBeat.function = RaCfgHeartBeatTimeOut;
+                pAd->RaCfgObj.heartBeat.data = (uintptr_t)pAd;
+#endif
+        }
 	mod_timer(&pAd->RaCfgObj.heartBeat, jiffies + HEART_BEAT_TIMEOUT * HZ);
 	RTMP_SEM_UNLOCK(&pAd->RaCfgObj.timerLock);
 }
@@ -248,13 +255,15 @@ static void RaCfgDelHeartBeatTimer(iNIC_PRIVATE *pAd)
 #endif // CONFIG_CONCURRENT_INIC_SUPPORT //
 
 	RTMP_SEM_LOCK(&pAd->RaCfgObj.timerLock);
-	if (pAd->RaCfgObj.heartBeat.function)
-	{
-		printk("Delete HeartBeatTimer ....\n");
-		del_timer_sync(&pAd->RaCfgObj.heartBeat);
-		pAd->RaCfgObj.heartBeat.function = NULL;
-		pAd->RaCfgObj.heartBeat.data = 0;
-	}
+        if (pAd->RaCfgObj.heartBeat.function)
+        {
+                printk("Delete HeartBeatTimer ....\n");
+                del_timer_sync(&pAd->RaCfgObj.heartBeat);
+                pAd->RaCfgObj.heartBeat.function = NULL;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
+                pAd->RaCfgObj.heartBeat.data = 0;
+#endif
+        }
 	RTMP_SEM_UNLOCK(&pAd->RaCfgObj.timerLock);
 }
 
@@ -509,21 +518,44 @@ static void RaCfgKillThread(iNIC_PRIVATE *pAd)
 
 static void RaCfgInitThreads(iNIC_PRIVATE *pAd)
 {
-	printk("============= Init Thread ===================\n");
-	pAd->RaCfgObj.threads_exit = 0;
-	init_completion(&pAd->RaCfgObj.TaskThreadComplete);
-	init_completion(&pAd->RaCfgObj.BacklogThreadComplete);
-	pAd->RaCfgObj.task_thread_pid = kernel_thread(RaCfgTaskThread, pAd, CLONE_VM);
-	pAd->RaCfgObj.backlog_thread_pid = kernel_thread(RaCfgBacklogThread, pAd, CLONE_VM);
-	printk("RacfgTaskThread pid = %d\n", pAd->RaCfgObj.task_thread_pid);
-	printk("RacfgBacklogThread pid = %d\n", pAd->RaCfgObj.backlog_thread_pid);
+        printk("============= Init Thread ===================\n");
+        pAd->RaCfgObj.threads_exit = 0;
+        init_completion(&pAd->RaCfgObj.TaskThreadComplete);
+        init_completion(&pAd->RaCfgObj.BacklogThreadComplete);
+        {
+                struct task_struct *task;
+
+                task = kthread_run(RaCfgTaskThread, pAd, "RaCfg Task");
+                if (IS_ERR(task)) {
+                        printk("failed to start RacfgTaskThread (%ld)\n", PTR_ERR(task));
+                        pAd->RaCfgObj.task_thread_pid = -1;
+                } else {
+                        pAd->RaCfgObj.task_thread_pid = task_pid_nr(task);
+                }
+
+                task = kthread_run(RaCfgBacklogThread, pAd, "RaCfg Backlog");
+                if (IS_ERR(task)) {
+                        printk("failed to start RacfgBacklogThread (%ld)\n", PTR_ERR(task));
+                        pAd->RaCfgObj.backlog_thread_pid = -1;
+                } else {
+                        pAd->RaCfgObj.backlog_thread_pid = task_pid_nr(task);
+                }
+        }
+        printk("RacfgTaskThread pid = %d\n", pAd->RaCfgObj.task_thread_pid);
+        printk("RacfgBacklogThread pid = %d\n", pAd->RaCfgObj.backlog_thread_pid);
 
 }
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+static void RaCfgHeartBeatTimeOut(struct timer_list *t)
+{
+        iNIC_PRIVATE *pAd = from_timer(pAd, t, RaCfgObj.heartBeat);
+#else
 static void RaCfgHeartBeatTimeOut(uintptr_t arg)
 {
-	iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+        iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+#endif
 
 #ifndef NM_SUPPORT
 	if (!NETIF_IS_UP(pAd->RaCfgObj.MainDev))
@@ -569,12 +601,17 @@ static void RaCfgHeartBeatTimeOut(uintptr_t arg)
 		RaCfgQueueReset(&pAd->RaCfgObj.taskQueue, &pAd->RaCfgObj.taskSem);
 		RaCfgQueueReset(&pAd->RaCfgObj.backlogQueue, &pAd->RaCfgObj.backlogSem);
 
-		init_completion(&pAd->RaCfgObj.TaskThreadComplete);
-		init_completion(&pAd->RaCfgObj.BacklogThreadComplete);
-		pAd->RaCfgObj.task_thread_pid = 
-		kernel_thread(RaCfgTaskThread, pAd, CLONE_VM);
-		pAd->RaCfgObj.backlog_thread_pid = 
-		kernel_thread(RaCfgBacklogThread, pAd, CLONE_VM);
+                init_completion(&pAd->RaCfgObj.TaskThreadComplete);
+                init_completion(&pAd->RaCfgObj.BacklogThreadComplete);
+                {
+                        struct task_struct *task;
+
+                        task = kthread_run(RaCfgTaskThread, pAd, "RaCfg Task");
+                        pAd->RaCfgObj.task_thread_pid = IS_ERR(task) ? -1 : task_pid_nr(task);
+
+                        task = kthread_run(RaCfgBacklogThread, pAd, "RaCfg Backlog");
+                        pAd->RaCfgObj.backlog_thread_pid = IS_ERR(task) ? -1 : task_pid_nr(task);
+                }
 
 		printk("\n==================================\n");
 		printk("RacfgTaskThread restart pid = %d\n", 
@@ -1360,9 +1397,15 @@ static void FreeArgBox(ArgBox *box)
 }
 
 #ifdef RETRY_PKT_SEND
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+static void upload_timeout(struct timer_list *t)
+{
+        iNIC_PRIVATE *pAd = from_timer(pAd, t, RaCfgObj.uploadTimer);
+#else
 static void upload_timeout(uintptr_t arg)
 {
-	iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+        iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+#endif
 	
 	if(pAd->RaCfgObj.RPKTInfo.retry > 0){
 		SendRaCfgCommand(pAd, 
@@ -1445,9 +1488,13 @@ static void _upload_firmware(iNIC_PRIVATE *pAd)
 	//turn-on timer
 	if (!pAd->RaCfgObj.uploadTimer.function)
 	{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+		timer_setup(&pAd->RaCfgObj.uploadTimer, upload_timeout, 0);
+#else
 		init_timer(&pAd->RaCfgObj.uploadTimer);
 		pAd->RaCfgObj.uploadTimer.function = upload_timeout;
 		pAd->RaCfgObj.uploadTimer.data = (uintptr_t)pAd;
+#endif
 	}
 	mod_timer(&pAd->RaCfgObj.uploadTimer, jiffies + RetryTimeOut*HZ/1000);
 #endif
@@ -1469,7 +1516,9 @@ static void _upload_firmware(iNIC_PRIVATE *pAd)
 	{
 		del_timer_sync(&pAd->RaCfgObj.uploadTimer);
 		pAd->RaCfgObj.uploadTimer.function = NULL;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 		pAd->RaCfgObj.uploadTimer.data = 0;
+#endif
 	}
 #endif
 
@@ -4166,9 +4215,15 @@ static void RaCfgWowInbandSend(uintptr_t arg)
 	
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+static void RaCfgWowInbandTimeout(struct timer_list *t)
+{
+    iNIC_PRIVATE *pAd = from_timer(pAd, t, RaCfgObj.WowInbandSignalTimer);
+#else
 static void RaCfgWowInbandTimeout(uintptr_t arg)
 {
-	iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+    iNIC_PRIVATE *pAd = (iNIC_PRIVATE *)arg;
+#endif
 	
 #ifndef NM_SUPPORT
 	if (!NETIF_IS_UP(pAd->RaCfgObj.MainDev))
@@ -4197,9 +4252,13 @@ static void RaCfgAddWowInbandTimer(iNIC_PRIVATE *pAd)
 
 	if (!pAd->RaCfgObj.WowInbandSignalTimer.function)
 	{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+		timer_setup(&pAd->RaCfgObj.WowInbandSignalTimer, RaCfgWowInbandTimeout, 0);
+#else
 		init_timer(&pAd->RaCfgObj.WowInbandSignalTimer);
 		pAd->RaCfgObj.WowInbandSignalTimer.function = RaCfgWowInbandTimeout;
 		pAd->RaCfgObj.WowInbandSignalTimer.data = (uintptr_t)pAd;
+#endif
 	}
 	mod_timer(&pAd->RaCfgObj.WowInbandSignalTimer, jiffies + WOW_INBAND_TIMEOUT * HZ);
 	RTMP_SEM_UNLOCK(&pAd->RaCfgObj.WowInbandSignalTimerLock);
@@ -4215,7 +4274,9 @@ static void RaCfgDelHeartWowInbandTimer(iNIC_PRIVATE *pAd)
 	{
 		del_timer_sync(&pAd->RaCfgObj.WowInbandSignalTimer);
 		pAd->RaCfgObj.WowInbandSignalTimer.function = NULL;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0)
 		pAd->RaCfgObj.WowInbandSignalTimer.data = 0;
+#endif
 	}
 	RTMP_SEM_UNLOCK(&pAd->RaCfgObj.WowInbandSignalTimerLock);
 }

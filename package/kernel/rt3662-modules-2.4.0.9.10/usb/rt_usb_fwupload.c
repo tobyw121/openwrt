@@ -1,4 +1,6 @@
 #include "../comm/rlk_inic.h"
+#include <linux/kthread.h>
+#include <linux/sched/signal.h>
 
 /*-------------------------------------------------------------------------*/
 // USB Firmware Upgrade
@@ -514,35 +516,40 @@ int	NICLoadFirmware(iNIC_PRIVATE *pAd)
 void fw_thread_init(PUCHAR pThreadName, PVOID pNotify)
 {
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
-	daemonize(pThreadName /*"%s",pAd->net_dev->name*/);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
+        allow_signal(SIGTERM);
+        allow_signal(SIGKILL);
+        current->flags |= PF_NOFREEZE;
+        strlcpy(current->comm, pThreadName, sizeof(current->comm));
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
+        daemonize(pThreadName /*"%s",pAd->net_dev->name*/);
 
-	allow_signal(SIGTERM);
-	allow_signal(SIGKILL);
-	current->flags |= PF_NOFREEZE;
+        allow_signal(SIGTERM);
+        allow_signal(SIGKILL);
+        current->flags |= PF_NOFREEZE;
 #else
-	unsigned long flags;
+        unsigned long flags;
 
-	daemonize();
-	reparent_to_init();
-	strcpy(current->comm, pThreadName);
+        daemonize();
+        reparent_to_init();
+        strcpy(current->comm, pThreadName);
 
-	siginitsetinv(&current->blocked, sigmask(SIGTERM) | sigmask(SIGKILL));
+        siginitsetinv(&current->blocked, sigmask(SIGTERM) | sigmask(SIGKILL));
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,4,22)
-	/* Allow interception of SIGKILL only
-	 * Don't allow other signals to interrupt the transmission */
-	spin_lock_irqsave(&current->sigmask_lock, flags);
-	flush_signals(current);
-	recalc_sigpending(current);
-	spin_unlock_irqrestore(&current->sigmask_lock, flags);
+        /* Allow interception of SIGKILL only
+         * Don't allow other signals to interrupt the transmission */
+        spin_lock_irqsave(&current->sigmask_lock, flags);
+        flush_signals(current);
+        recalc_sigpending(current);
+        spin_unlock_irqrestore(&current->sigmask_lock, flags);
 #endif
 #endif
 
 
 #if 0 /* Continue main program when thread complete (f/w upgrade complete) */
-	/* signal that we've started the thread */
-	complete(pNotify);
+        /* signal that we've started the thread */
+        complete(pNotify);
 #endif
 
 }
@@ -627,19 +634,23 @@ void Start_fwupgrade_thread(iNIC_PRIVATE *pAd)
 
 	init_completion(&rt_fw_info->fwupgrad_notify);
 
-	rt_fw_info->pAd = pAd;
-	rt_fw_info->fwupgrade_pid = kernel_thread(write_firmware_thread, rt_fw_info, CLONE_VM);
+        rt_fw_info->pAd = pAd;
+        {
+                struct task_struct *task;
 
-	if (rt_fw_info->fwupgrade_pid < 0) {
-		printk("unable to start kernel firmware upgrade thread\n");
-	}
-	else
-	{
-		printk("f/w upgrade pid=%d, %x\n", rt_fw_info->fwupgrade_pid, rt_fw_info->fwupgrade_pid);
-	}
+                task = kthread_run(write_firmware_thread, rt_fw_info, "RT_FWUpgrade");
+                if (IS_ERR(task)) {
+                        printk("unable to start kernel firmware upgrade thread\n");
+                        rt_fw_info->fwupgrade_pid = -1;
+                        complete(&rt_fw_info->fwupgrad_notify);
+                } else {
+                        rt_fw_info->fwupgrade_pid = task_pid_nr(task);
+                        printk("f/w upgrade pid=%d, %x\n", rt_fw_info->fwupgrade_pid, rt_fw_info->fwupgrade_pid);
+                }
+        }
 
-	wait_for_completion(&rt_fw_info->fwupgrad_notify);
-	kfree(write_dat_file_semaphore);
-	kfree(rt_fw_info);
+        wait_for_completion(&rt_fw_info->fwupgrad_notify);
+        kfree(write_dat_file_semaphore);
+        kfree(rt_fw_info);
 
 }
