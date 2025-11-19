@@ -57,25 +57,55 @@ endef
 define KernelPackage/rt3662-template
   SUBMENU:=Wireless Drivers
   TITLE:=Ralink RT3662 iNIC ($(1)) support
-  DEPENDS:=@TARGET_ramips_rt3883
+  DEPENDS:=@(TARGET_ramips_rt3883||TARGET_lantiq_xrx200||TARGET_lantiq_xrx200_legacy)
   FILES:=$(PKG_BUILD_DIR)/rt3662_iNIC_$(2).$(LINUX_KMOD_SUFFIX)
   AUTOLOAD:=$(call AutoProbe,rt3662_iNIC)
+endef
+
+define rt3662_install_files
+	$(INSTALL_DIR) $(1)/etc/Wireless/RT3662$(2)
+	$(INSTALL_DATA) $(RT3662_SRC_DIR)/firmware/iNIC_ap.dat \
+		$(1)/etc/Wireless/RT3662$(2)/
+	$(INSTALL_DATA) $(RT3662_SRC_DIR)/firmware/iNIC_sta.dat \
+		$(1)/etc/Wireless/RT3662$(2)/
+	$(if $(wildcard $(RT3662_SRC_DIR)/firmware/$(3)/iNIC_ap.bin), \
+	$(INSTALL_DATA) $(RT3662_SRC_DIR)/firmware/$(3)/iNIC_ap.bin \
+		$(1)/etc/Wireless/RT3662$(2)/)
+	$(if $(wildcard $(RT3662_SRC_DIR)/firmware/$(3)/iNIC_sta.bin), \
+	$(INSTALL_DATA) $(RT3662_SRC_DIR)/firmware/$(3)/iNIC_sta.bin \
+		$(1)/etc/Wireless/RT3662$(2)/)
 endef
 
 define KernelPackage/rt3662-pci
   $(call KernelPackage/rt3662-template,PCI,pci)
 endef
 
+define KernelPackage/rt3662-pci/install
+	$(call rt3662_install_files,$(1),,usb)
+endef
+
 define KernelPackage/rt3662-pcie
   $(call KernelPackage/rt3662-template,PCIE,pcie)
+endef
+
+define KernelPackage/rt3662-pcie/install
+	$(call rt3662_install_files,$(1),,usb)
 endef
 
 define KernelPackage/rt3662-mii
   $(call KernelPackage/rt3662-template,MII,mii)
 endef
 
+define KernelPackage/rt3662-mii/install
+	$(call rt3662_install_files,$(1),,mii)
+endef
+
 define KernelPackage/rt3662-usb
   $(call KernelPackage/rt3662-template,USB,usb)
+endef
+
+define KernelPackage/rt3662-usb/install
+	$(call rt3662_install_files,$(1),USB,usb)
 endef
 
 $(eval $(call KernelPackage,rt3662-pci))
