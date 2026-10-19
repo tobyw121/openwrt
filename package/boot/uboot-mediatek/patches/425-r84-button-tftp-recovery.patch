@@ -1,0 +1,66 @@
+# R84 guarded button/TFTP recovery; applies after 422 and 424
+--- a/arch/mips/mach-mtmips/mt7621/r84.c
++++ b/arch/mips/mach-mtmips/mt7621/r84.c
+@@ -16,6 +16,7 @@
+ 
+ #define R84_BDINFO_MAC_OFFSET 0x00ffde00U
+ #define R84_WDOG_GPIO 3
++#define R84_RECOVERY_GPIO 10 /* reset key; active low */
+ #define R84_WDOG_HALF_PERIOD_US 1000000ULL
+ 
+ static struct cyclic_info r84_watchdog_cyclic;
+@@ -75,5 +76,29 @@
+ 	cyclic_register(&r84_watchdog_cyclic, r84_watchdog_tick,
+ 			R84_WDOG_HALF_PERIOD_US, "r84-ext-wdog-gpio3");
+ 	puts("R84: GPIO3 watchdog cyclic registered\n");
++
++	/* Recovery key is GPIO10 active-low on the R84 board.
++	 * Fail open: GPIO errors must NEVER block normal boot.
++	 * Detection occurs after watchdog cyclic registration.
++	 */
++	ret = gpio_request(R84_RECOVERY_GPIO, "r84-recovery-reset");
++	if (ret) {
++		printf("R84: recovery key request failed (%d)\n", ret);
++	} else {
++		ret = gpio_direction_input(R84_RECOVERY_GPIO);
++		if (ret) {
++			printf("R84: recovery key input failed (%d)\n", ret);
++		} else {
++			ret = gpio_get_value(R84_RECOVERY_GPIO);
++			if (ret == 0) {
++				/* RAM-only environment; no NOR writes here. */
++				env_set("r84_recovery_requested", "1");
++				puts("R84: RESET pressed - TFTP recovery requested\n");
++			} else if (ret < 0) {
++				printf("R84: recovery key read failed (%d)\n", ret);
++			}
++		}
++		gpio_free(R84_RECOVERY_GPIO);
++	}
+ 	return 0;
+ }
+--- a/cudy_ap1300e-wall-v1_env
++++ b/cudy_ap1300e-wall-v1_env
+@@ -1,7 +1,6 @@
+ # Cudy AP1300E Wall R84, MT7621, 16 MiB SPI NOR
+ # OEM kernel uImage starts at 0x50000, mapped to 0x1fc50000 (KSEG1).
+ # DO NOT use this as a factory-flash image without hardware verification.
+-bootcmd=run boot_nor
+ bootdelay=5
+ boot_nor=bootm 0x1fc50000
+ boot_tftp=tftpboot ${loadaddr} ${bootfile} && bootm ${loadaddr}
+@@ -9,3 +8,13 @@
+ ipaddr=192.168.1.119
+-serverip=192.168.1.88
++serverip=192.168.1.1
+ loadaddr=0x83000000
++# Recovery: hold GPIO10 RESET at power-on to stop autoboot safely.
++# This path only changes the RAM environment. NOR is never auto-erased.
++bootcmd=run r84_boot_select
++r84_boot_select=if test "${r84_recovery_requested}" = "1"; then echo R84 TFTP recovery mode - no automatic flash; echo TFTP default 192.168.1.1 recovery.bin - run r84_tftp_load; echo Then validate and run r84_flash_firmware with confirmation; else run boot_nor; fi
++r84_recovery_file=recovery.bin
++r84_tftp_load=tftpboot ${loadaddr} ${r84_recovery_file}
++# Explicit opt-in: setenv r84_flash_confirm YES; run r84_flash_firmware
++# Assumes a directly flashable legacy uImage+rootfs layout, NOT a full-SPI dump.
++# Max firmware partition length = 0xf80000 at offset 0x50000.
++r84_flash_firmware=if test "${r84_recovery_requested}" = "1"; then if test "${r84_flash_confirm}" = "YES"; then if iminfo ${loadaddr}; then if itest ${filesize} -ge 0x400000; then if itest ${filesize} -le 0xf80000; then sf probe 0:0 && sf erase 0x50000 0xf80000 && sf write ${loadaddr} 0x50000 ${filesize}; else echo ERROR - oversized image; fi; else echo ERROR - image too small; fi; else echo ERROR - invalid uImage; fi; else echo Set r84_flash_confirm to YES before flashing; fi; else echo Boot with RESET pressed before using this command; fi

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Cudy AP1300E Wall (R84) OEM external watchdog feed.
+# OEM preinit: led_timer oem:green:hwdog 1000 1000
+# GPIO3 is exported through gpio-leds with the timer trigger in the DTS.
+r84_oem_hwdog_preinit() {
+    local led=/sys/class/leds/oem:green:hwdog
+    [ -d "$led" ] || return 0
+
+    # Program the trigger and timings in the same order as OEM led_timer.
+    # Re-assert timer to handle kernels/userspace changing the trigger.
+    echo timer > "$led/trigger" || return 1
+    echo 1000 > "$led/delay_on" || return 1
+    echo 1000 > "$led/delay_off" || return 1
+}
+boot_hook_add preinit_essential r84_oem_hwdog_preinit

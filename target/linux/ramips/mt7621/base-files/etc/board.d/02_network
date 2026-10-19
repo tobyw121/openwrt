@@ -72,6 +72,7 @@ ramips_setup_interfaces()
 	asiarf,ap7621-001|\
 	comfast,cf-e390ax|\
 	comfast,cf-ew72-v2|\
+	cudy,ap1300e-wall-v1|\
 	cudy,m1300-v2|\
 	cudy,m1800|\
 	dna,valokuitu-plus-ex400|\
@@ -196,6 +197,19 @@ ramips_setup_macs()
 	local label_mac=""
 
 	case $board in
+	# R84: retain the OEM LAN MAC in BDINFO. Derive a different,
+	# locally administered unicast WAN MAC for each physical unit.
+	# For d4:0d:ab:2b:d7:aa this yields d6:0d:ab:2b:d7:aa.
+	cudy,ap1300e-wall-v1)
+		lan_mac=$(mtd_get_mac_binary bdinfo 0xde00)
+		[ -n "$lan_mac" ] || lan_mac=$(cat /sys/class/net/eth0/address)
+		label_mac=$lan_mac
+		if [ -n "$lan_mac" ]; then
+			local first_octet="${lan_mac%%:*}"
+			wan_mac=$(printf '%02x:%s' "$(( (0x${first_octet} | 2) & 254 ))" "${lan_mac#*:}")
+			[ "$wan_mac" = "$lan_mac" ] && wan_mac=$(macaddr_add "$lan_mac" 1)
+		fi
+		;;
 	alfa-network,ax1800rm|\
 	jcg,y2|\
 	wavlink,wl-wn531a6|\

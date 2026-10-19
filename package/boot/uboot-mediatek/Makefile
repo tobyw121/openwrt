@@ -66,6 +66,16 @@ define U-Boot/mt7621_rfb
   UBOOT_IMAGE:=u-boot-mt7621.bin
 endef
 
+define U-Boot/mt7621_cudy_ap1300e-wall-v1
+  NAME:=Cudy AP1300E Wall v1 (R84, experimental)
+  HIDDEN:=
+  UBOOT_CONFIG:=mt7621_cudy_ap1300e-wall-v1
+  BUILD_DEVICES:=cudy_ap1300e-wall-v1
+  BUILD_TARGET:=ramips
+  BUILD_SUBTARGET:=mt7621
+  UBOOT_IMAGE:=u-boot-mt7621.bin
+endef
+
 define U-Boot/mt7621_nand_rfb
   NAME:=MT7621 Reference Board (NAND)
   UBOOT_CONFIG:=mt7621_nand_rfb
@@ -861,6 +871,7 @@ endef
 UBOOT_TARGETS := \
 	mt7620_mt7530_rfb \
 	mt7620_rfb \
+	mt7621_cudy_ap1300e-wall-v1 \
 	mt7621_nand_rfb \
 	mt7621_rfb \
 	mt7621_zbtlink_zbt-wg3526-16m \

@@ -1,0 +1,109 @@
+# R84 automatic TFTP recovery (experimental): follows 422-425
+--- a/arch/mips/mach-mtmips/mt7621/r84.c
++++ b/arch/mips/mach-mtmips/mt7621/r84.c
+@@ -102,3 +102,86 @@
+ 	}
+ 	return 0;
+ }
++
++/* Additional image layout check: uImage starts at byte 0, immediately
++ * followed by SquashFS, with optional <=64 KiB alignment padding.
++ * This is structural validation, NOT signature authentication.
++ */
++static unsigned int r84_be32(const unsigned char *p)
++{
++ return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) |
++        ((unsigned int)p[2] << 8) | p[3];
++}
++
++static unsigned long long r84_le64(const unsigned char *p)
++{
++ unsigned long long v = 0;
++ int i;
++ for (i = 7; i >= 0; i--)
++  v = (v << 8) | p[i];
++ return v;
++}
++
++static int do_r84check(struct cmd_tbl *cmdtp, int flag, int argc,
++                       char *const argv[])
++{
++ const unsigned char *data;
++ unsigned long addr, length, pos, limit, klen;
++ unsigned long long used;
++ unsigned int block;
++
++ if (argc != 3)
++  return CMD_RET_USAGE;
++ addr = hextoul(argv[1], NULL);
++ length = hextoul(argv[2], NULL);
++ if (length < 0x400000 || length > 0xf80000 ||
++     addr < 0x80000000 || addr > 0x86000000 ||
++     length > 0x86000000 - addr) {
++  puts("R84: invalid image address/length\n");
++  return CMD_RET_FAILURE;
++ }
++ data = (const unsigned char *)addr;
++ if (r84_be32(data) != 0x27051956) {
++  puts("R84: expected legacy uImage\n");
++  return CMD_RET_FAILURE;
++ }
++ /* Header name R84 and architecture MIPS (7) are checked here;
++  * 'iminfo' separately verifies the uImage CRCs.
++  */
++ if (data[28] != 5 || data[29] != 5 || data[30] != 2 ||
++     data[32] != 'R' || data[33] != '8' || data[34] != '4') {
++  puts("R84: wrong image OS/architecture/name\n");
++  return CMD_RET_FAILURE;
++ }
++ klen = r84_be32(data + 12);
++ if (klen < 0x10000 || klen > length - 64) {
++  puts("R84: uImage length invalid\n");
++  return CMD_RET_FAILURE;
++ }
++ pos = 64 + klen;
++ limit = pos + 0x10000;
++ if (limit > length - 96)
++  limit = length - 96;
++ for (; pos <= limit; pos += 1) {
++  if (data[pos] != 'h' || data[pos+1] != 's' ||
++      data[pos+2] != 'q' || data[pos+3] != 's')
++   continue;
++  block = (unsigned int)data[pos+12] |
++          ((unsigned int)data[pos+13] << 8) |
++          ((unsigned int)data[pos+14] << 16) |
++          ((unsigned int)data[pos+15] << 24);
++  used = r84_le64(data + pos + 40);
++  if (block != 65536 && block != 131072 && block != 262144)
++   continue;
++  if (used < 4096 || used > length - pos)
++   continue;
++  printf("R84: uImage + SquashFS structure OK, rootfs @ +0x%lx\n", pos);
++  return CMD_RET_SUCCESS;
++ }
++ puts("R84: no valid bounded SquashFS after kernel\n");
++ return CMD_RET_FAILURE;
++}
++
++U_BOOT_CMD(r84check, 3, 0, do_r84check,
++           "check R84 uImage + following SquashFS layout",
++           "<ram_addr> <file_size>");
+--- a/cudy_ap1300e-wall-v1_env
++++ b/cudy_ap1300e-wall-v1_env
+@@ -11,10 +11,15 @@
+ # Recovery: hold GPIO10 RESET at power-on to stop autoboot safely.
+ # This path only changes the RAM environment. NOR is never auto-erased.
+ bootcmd=run r84_boot_select
+-r84_boot_select=if test "${r84_recovery_requested}" = "1"; then echo R84 TFTP recovery mode - no automatic flash; echo TFTP default 192.168.1.1 recovery.bin - run r84_tftp_load; echo Then validate and run r84_flash_firmware with confirmation; else run boot_nor; fi
++r84_boot_select=if test "${r84_recovery_requested}" = "1"; then run r84_auto_recovery; else run boot_nor; fi
+ r84_recovery_file=recovery.bin
+ r84_tftp_load=tftpboot ${loadaddr} ${r84_recovery_file}
+ # Explicit opt-in: setenv r84_flash_confirm YES; run r84_flash_firmware
+ # Assumes a directly flashable legacy uImage+rootfs layout, NOT a full-SPI dump.
+ # Max firmware partition length = 0xf80000 at offset 0x50000.
+ r84_flash_firmware=if test "${r84_recovery_requested}" = "1"; then if test "${r84_flash_confirm}" = "YES"; then if iminfo ${loadaddr}; then if itest ${filesize} -ge 0x400000; then if itest ${filesize} -le 0xf80000; then sf probe 0:0 && sf erase 0x50000 0xf80000 && sf write ${loadaddr} 0x50000 ${filesize}; else echo ERROR - oversized image; fi; else echo ERROR - image too small; fi; else echo ERROR - invalid uImage; fi; else echo Set r84_flash_confirm to YES before flashing; fi; else echo Boot with RESET pressed before using this command; fi
++# One-button recovery: successful image structure/CRC checks BEFORE erase.
++# Readback is compared byte-for-byte, then boot from NOR.
++# Verify address 0x84000000 leaves 16 MiB headroom for both buffers in 128 MiB RAM.
++r84_verify_addr=0x84000000
++r84_auto_recovery=echo R84 automatic TFTP recovery - 192.168.1.1 recovery.bin; if run r84_tftp_load; then if iminfo ${loadaddr}; then if r84check ${loadaddr} ${filesize}; then if sf probe 0:0; then if sf erase 0x50000 0xf80000; then if sf write ${loadaddr} 0x50000 ${filesize}; then if sf read ${r84_verify_addr} 0x50000 ${filesize}; then if cmp.b ${loadaddr} ${r84_verify_addr} ${filesize}; then echo R84 recovery verified - booting; run boot_nor; else echo ERROR FLASH VERIFY - UART recovery required; fi; else echo ERROR FLASH READ - UART recovery required; fi; else echo ERROR FLASH WRITE - UART recovery required; fi; else echo ERROR FLASH ERASE - UART recovery required; fi; else echo ERROR FLASH PROBE; fi; else echo ERROR R84 IMAGE LAYOUT; fi; else echo ERROR IMAGE CRC; fi; else echo ERROR TFTP DOWNLOAD; fi

@@ -1,0 +1,8 @@
+# R84: include U-Boot command API for CMD_RET_* and U_BOOT_CMD after patch 426.
+--- a/arch/mips/mach-mtmips/mt7621/r84.c
++++ b/arch/mips/mach-mtmips/mt7621/r84.c
+@@ -10,3 +10,4 @@
+ #include <asm/gpio.h>
++#include <command.h>
+ #include <cyclic.h>
+ #include <env.h>

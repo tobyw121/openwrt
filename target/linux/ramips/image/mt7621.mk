@@ -698,6 +698,7 @@ define Device/confiabits_mt7621-v1
   DEVICE_MODEL := MT7621
   DEVICE_VARIANT := v1
   DEVICE_PACKAGES := kmod-mt7603 kmod-mt7615e kmod-mt7663-firmware-ap \
+	mdio-tools kmod-mdio-netlink ethtool ip-full ip-bridge tcpdump-mini \
 	-uboot-envtools
 endef
 TARGET_DEVICES += confiabits_mt7621-v1
@@ -715,6 +716,74 @@ define Device/cudy_ap1300-outdoor-v1
   SUPPORTED_DEVICES += R39
 endef
 TARGET_DEVICES += cudy_ap1300-outdoor-v1
+
+# Assemble the device-specific 16 MiB SPI image as part of the regular R84 image build.
+# Original dump must be provided by the device owner in the OpenWrt top-level dir.
+# Do not bundle r84-original-spi.bin in published source archives.
+define Build/r84-fullflash
+	@test -f "$(TOPDIR)/r84-original-spi.bin" || { \
+		echo "ERROR R84: Copy YOUR ORIGINAL 16MiB dump to $(TOPDIR)/r84-original-spi.bin before building the R84 images" >&2; \
+		exit 1; \
+	}
+	@rm -f "$@.r84-new"
+	python3 "$(TOPDIR)/scripts/r84-make-fullflash.py" \
+		--dump "$(TOPDIR)/r84-original-spi.bin" \
+		--firmware "$@" \
+		--output "$@.r84-new"
+	mv "$@.r84-new" "$@"
+endef
+
+# Additional R84 SPI-only test image with EXPERIMENTAL OpenWrt U-Boot 2024.10.
+# This is intentionally NOT a LuCI/sysupgrade image. Depends on the separate
+# package/boot/uboot-mediatek build for this exact R84 board.
+define Build/r84-fullflash-openuboot
+	@test -f "$(TOPDIR)/r84-original-spi.bin" || { \
+		echo "ERROR R84: device-specific r84-original-spi.bin missing" >&2; exit 1; \
+	}
+	@test -f "$(TOPDIR)/staging_dir/target-mipsel_24kc_musl/image/mt7621_cudy_ap1300e-wall-v1-u-boot-mt7621.bin" || { \
+		echo "ERROR R84: build experimental bootloader first: ./build-r84-uboot.sh" >&2; exit 1; \
+	}
+	@rm -f "$@.r84-new"
+	python3 "$(TOPDIR)/scripts/r84-make-fullflash.py" \
+		--dump "$(TOPDIR)/r84-original-spi.bin" \
+		--firmware "$@" \
+		--uboot "$(TOPDIR)/staging_dir/target-mipsel_24kc_musl/image/mt7621_cudy_ap1300e-wall-v1-u-boot-mt7621.bin" \
+		--output "$@.r84-new"
+	mv "$@.r84-new" "$@"
+endef
+
+# R84 opt-in full sysupgrade: full firmware + board-specific U-Boot.
+# Never pack device-specific factory/BDINFO or overwrite them during upgrade.
+define Build/r84-sysupgrade-full-uboot
+	@test -s "$(TOPDIR)/staging_dir/target-mipsel_24kc_musl/image/mt7621_cudy_ap1300e-wall-v1-u-boot-mt7621.bin" || { echo "ERROR: build R84 U-Boot with ./build-r84-uboot.sh first" >&2; exit 1; }
+	python3 "$(TOPDIR)/scripts/r84-make-full-sysupgrade.py" \
+		--firmware "$@" \
+		--uboot "$(TOPDIR)/staging_dir/target-mipsel_24kc_musl/image/mt7621_cudy_ap1300e-wall-v1-u-boot-mt7621.bin" \
+		--output "$@.new"
+	mv "$@.new" "$@"
+endef
+
+define Device/cudy_ap1300e-wall-v1
+  $(Device/dsa-migration)
+  $(Device/uimage-lzma-loader)
+  DEVICE_VENDOR := Cudy
+  DEVICE_MODEL := AP1300E Wall
+  DEVICE_VARIANT := v1
+  IMAGE_SIZE := 15872k
+  UIMAGE_NAME := R84
+  DEVICE_PACKAGES := kmod-mt7603 kmod-mt7615e kmod-mt7663-firmware-ap \
+	-uboot-envtools
+  SUPPORTED_DEVICES += R84
+  IMAGES += sysupgrade-full-uboot.bin
+  IMAGE/sysupgrade-full-uboot.bin := append-kernel | append-rootfs | pad-rootfs | check-size | r84-sysupgrade-full-uboot | append-metadata
+  IMAGES += spi-firmware.bin
+  IMAGE/spi-firmware.bin := append-kernel | append-rootfs | pad-rootfs | check-size
+  IMAGES += spi16m-fullflash.bin
+  IMAGE/spi16m-fullflash.bin := append-kernel | append-rootfs | pad-rootfs | check-size | r84-fullflash
+  IMAGES += spi16m-openuboot-test.bin
+  IMAGE/spi16m-openuboot-test.bin := append-kernel | append-rootfs | pad-rootfs | check-size | r84-fullflash-openuboot
+endef
+TARGET_DEVICES += cudy_ap1300e-wall-v1
 
 define Device/cudy_c200p
   $(Device/dsa-migration)

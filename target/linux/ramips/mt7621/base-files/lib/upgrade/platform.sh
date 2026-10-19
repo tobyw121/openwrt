@@ -5,8 +5,58 @@
 PART_NAME=firmware
 REQUIRE_IMAGE_METADATA=1
 
-RAMFS_COPY_BIN='fw_printenv fw_setenv'
+RAMFS_COPY_BIN='fw_printenv fw_setenv sha256sum'
 RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
+
+# R84 full-update container, distinct from the standard firmware-only uImage.
+# Stage 1 checks are repeated under RAMFS during the actual flash procedure.
+r84_full_member_dir='r84-full-update'
+r84_is_full_update() {
+	tar -tf "$1" 2>/dev/null | grep -qx "$r84_full_member_dir/CONTROL"
+}
+
+r84_check_partitions() {
+	[ "$(board_name)" = 'cudy,ap1300e-wall-v1' ] || return 1
+	grep -Eq '^mtd[0-9]+: 00030000 [[:xdigit:]]+ "u-boot"$' /proc/mtd || return 1
+	grep -Eq '^mtd[0-9]+: 00f80000 [[:xdigit:]]+ "firmware"$' /proc/mtd || return 1
+	grep -Eq '^mtd[0-9]+: 00010000 [[:xdigit:]]+ "factory"$' /proc/mtd || return 1
+	grep -Eq '^mtd[0-9]+: 00010000 [[:xdigit:]]+ "bdinfo"$' /proc/mtd || return 1
+}
+
+r84_check_full_image() {
+	local img="$1" dir="$r84_full_member_dir" tmp
+	r84_check_partitions || { echo 'R84: unexpected partition layout' >&2; return 1; }
+	tmp="$(mktemp -d /tmp/r84-check.XXXXXX)" || return 1
+	tar -xf "$img" -C "$tmp" "$dir/CONTROL" "$dir/firmware.bin" "$dir/u-boot.bin" "$dir/SHA256SUMS" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+	[ "$(cat "$tmp/$dir/CONTROL")" = 'R84_FULL_UBOOT_SYSUPGRADE_V1' ] || { rm -rf "$tmp"; return 1; }
+	[ "$(wc -c < "$tmp/$dir/u-boot.bin")" -eq 196608 ] || { rm -rf "$tmp"; return 1; }
+	[ "$(wc -c < "$tmp/$dir/firmware.bin")" -gt 65536 ] || { rm -rf "$tmp"; return 1; }
+	[ "$(wc -c < "$tmp/$dir/firmware.bin")" -le 16252928 ] || { rm -rf "$tmp"; return 1; }
+	[ "$(dd if="$tmp/$dir/firmware.bin" bs=4 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')" = '27051956' ] || { rm -rf "$tmp"; return 1; }
+	(cd "$tmp/$dir" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || { rm -rf "$tmp"; return 1; }
+	rm -rf "$tmp"
+}
+
+r84_do_full_upgrade() {
+	local image="$1" dir="$r84_full_member_dir" target='/tmp/r84-full-update'
+	r84_check_partitions || { echo 'R84: partition safety check failed' >&2; exit 1; }
+	mkdir -p "$target" || exit 1
+	tar -xf "$image" -C "$target" "$dir/CONTROL" "$dir/firmware.bin" "$dir/u-boot.bin" "$dir/SHA256SUMS" || exit 1
+	[ "$(cat "$target/$dir/CONTROL")" = 'R84_FULL_UBOOT_SYSUPGRADE_V1' ] || exit 1
+	[ "$(wc -c < "$target/$dir/u-boot.bin")" -eq 196608 ] || exit 1
+	[ "$(wc -c < "$target/$dir/firmware.bin")" -le 16252928 ] || exit 1
+	[ "$(dd if="$target/$dir/firmware.bin" bs=4 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')" = '27051956' ] || exit 1
+	(cd "$target/$dir" && sha256sum -c SHA256SUMS) || exit 1
+	# Flash bootloader last: if firmware writing fails, the current U-Boot remains intact.
+	# This is not power-fail atomic. Keep a programmer/recovery image available.
+	echo 'R84: writing kernel/rootfs to firmware partition ...'
+	mtd write "$target/$dir/firmware.bin" firmware || exit 1
+	mtd verify "$target/$dir/firmware.bin" firmware || exit 1
+	echo 'R84: writing NEW U-Boot to 0x000000..0x030000 ...'
+	mtd write "$target/$dir/u-boot.bin" u-boot || exit 1
+	mtd verify "$target/$dir/u-boot.bin" u-boot || exit 1
+	echo 'R84: firmware and bootloader verified; factory/BDINFO/env preserved.'
+}
 
 platform_check_image() {
 	local board=$(board_name)
@@ -14,6 +64,10 @@ platform_check_image() {
 
 	[ "$#" -gt 1 ] && return 1
 
+	if [ "$board" = 'cudy,ap1300e-wall-v1' ] && r84_is_full_update "$1"; then
+		r84_check_full_image "$1" || return 1
+		return 0
+	fi
 	case "$board" in
 	buffalo,wsr-2533dhpl2|\
 	buffalo,wsr-2533dhpls)
@@ -21,11 +75,19 @@ platform_check_image() {
 		;;
 	esac
 
+	if [ "$board" = 'cudy,ap1300e-wall-v1' ] && tar -tf "$1" >/dev/null 2>&1; then
+		echo 'R84: unrecognized tar container; refusing upgrade' >&2
+		return 1
+	fi
 	return 0
 }
 
 platform_do_upgrade() {
 	local board=$(board_name)
+	if [ "$board" = 'cudy,ap1300e-wall-v1' ] && r84_is_full_update "$1"; then
+		r84_do_full_upgrade "$1"
+		return $?
+	fi
 
 	case "$board" in
 	alfa-network,quad-e4g)

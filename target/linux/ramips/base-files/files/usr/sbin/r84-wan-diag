@@ -1,0 +1,61 @@
+#!/bin/sh
+# R84 non-destructive WAN/PHY diagnostics for UART or SSH.
+# Does not alter network settings or access MTD flash.
+OUT="${1:-/tmp/r84-wan-diag.txt}"
+case "$OUT" in /*) ;; *) echo "Output must be an absolute path" >&2; exit 2;; esac
+umask 077
+(
+ echo "===== R84 WAN / MT7530 DIAG ====="
+ date -u
+ uptime
+ uname -a
+ echo "===== link state ====="
+ for p in eth0 lan wan br-lan; do
+   echo "--- $p ---"
+   [ -d "/sys/class/net/$p" ] || continue
+   for f in carrier operstate speed duplex address; do
+     printf '%s: ' "$f"
+     cat "/sys/class/net/$p/$f" 2>/dev/null || echo 'unavailable'
+   done
+   command -v ethtool >/dev/null 2>&1 && ethtool "$p" 2>&1
+ done
+ echo "===== iproute2 ====="
+ ip -d link show 2>&1
+ ip -4 addr show 2>&1
+ ip -4 route show 2>&1
+ ip -6 route show 2>&1
+ command -v bridge >/dev/null 2>&1 && bridge link show 2>&1
+ echo "===== UCI / interface ====="
+ uci show network 2>&1
+ ifstatus wan 2>&1
+ ifstatus lan 2>&1
+ echo "===== MDIO PHY inventory ====="
+ ls -l /sys/bus/mdio_bus/devices/ 2>&1
+ for n in 00 01 02 03 04; do
+  p="/sys/bus/mdio_bus/devices/mt7530-0:$n"
+  echo "--- MT7530 PHY $n ---"
+  [ -d "$p" ] || continue
+  for f in phy_id phy_interface; do
+    printf '%s: ' "$f"; cat "$p/$f" 2>/dev/null || echo unavailable
+  done
+ done
+ echo "===== ethtool info and stats ====="
+ for p in lan wan; do
+  ethtool -i "$p" 2>&1
+  ethtool -S "$p" 2>&1
+ done
+ echo "===== kernel MDIO modules ====="
+ lsmod 2>&1 | grep -i -E 'mdio|dsa|mt7530|phy|netlink' || true
+ echo "===== firewall forwarding summary ====="
+ uci show firewall 2>&1 | grep -E 'zone|forwarding|masq|network' || true
+ echo "===== relevant logs ====="
+ dmesg 2>&1 | grep -iE 'mt7530|mdio|phy|ethernet|wan|dsa|link' | tail -100
+ logread 2>&1 | grep -iE 'mt7530|mdio|phy|wan|udhcpc|netifd|link' | tail -100
+ echo "===== mdio tool help (no register writes) ====="
+ if command -v mdio >/dev/null 2>&1; then mdio --help 2>&1 | head -45; else echo 'mdio unavailable'; fi
+ echo "===== END ====="
+) > "$OUT" 2>&1
+rc=$?
+chmod 600 "$OUT" 2>/dev/null
+printf 'R84 diagnostics saved to %s (exit %s)\n' "$OUT" "$rc"
+exit "$rc"
